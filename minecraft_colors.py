@@ -1,3 +1,6 @@
+import collections
+import itertools
+import os
 import png
 import sys
 
@@ -23,6 +26,11 @@ def _init_colors():
 __color2block = _init_colors()
 #print(__color2block)
 
+__planes = {
+    'YZ': { 'delta_row': (0, 1, 0), 'delta_col': (0, 0, -1) },
+    'YX': { 'delta_row': (0, 1, 0), 'delta_col': (-1, 0, 0) },
+}
+
 def color2block(color):
     block = __color2block.get(color)
     if block is None:
@@ -45,16 +53,32 @@ def tuple_add(v1, v2):
     assert len(v1) == len(v2)
     return tuple(map(sum, zip(v1, v2)))
 
+def find_most_common_block(blocks):
+    frequency_map = collections.Counter(itertools.chain(*blocks))
+    return max(frequency_map.items(), key=lambda x: x[1])[0]
+
+def make_fill_command(origin, blocks, delta_row, delta_col, default_block):
+    row_count = len(blocks)-1
+    col_count = len(blocks[0])-1
+    row_offset = tuple(x * row_count for x in delta_row)
+    col_offset = tuple(x * col_count for x in delta_col)
+    destination = tuple_add(tuple_add(row_offset, col_offset), origin)
+    x0, y0, z0 = origin
+    x1, y1, z1 = destination
+    return f'fill {x0} {y0} {z0} {x1} {y1} {z1} minecraft:{default_block} replace'
+
 def image2commands(filename, origin, delta_row=(0, 1, 0), delta_col=(0, 0, 1)):
     blocks = image2blocks(filename)
     blocks.reverse()
+    default_block = find_most_common_block(blocks)
     position = origin
-    commands = []
+    commands = [ make_fill_command(origin, blocks, delta_row, delta_col, default_block) ]
     for row in blocks:
         row_origin = position
         for block in row:
             x, y, z = position
-            commands.append(f'setblock {x} {y} {z} minecraft:{block}')
+            if block != default_block:
+                commands.append(f'setblock {x} {y} {z} minecraft:{block}')
             position = tuple_add(position, delta_col)
         position = tuple_add(row_origin, delta_row)
     return commands
@@ -62,7 +86,9 @@ def image2commands(filename, origin, delta_row=(0, 1, 0), delta_col=(0, 0, 1)):
 def main():
     _, png_path, x, y, z = sys.argv
     origin = tuple(map(int, (x, y, z)))
-    for cmd in image2commands(png_path, origin):
+    plane_name = os.environ.get('PLANE', 'YZ').upper()
+    plane = __planes.get(plane_name)
+    for cmd in image2commands(png_path, origin, plane['delta_row'], plane['delta_col']):
         print(cmd)
 
 if __name__ == "__main__":
